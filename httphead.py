@@ -75,7 +75,7 @@ class http_request(object):
                 file_relative_path = '/index.html'
             file_path = resource_path.root_dir + file_relative_path
         else: # bad request
-            is_bad_req = True
+            is_bad_req = True # whether is a bad request. 
             file_path = resource_path.bad_request_html
         self.handle_file_request(file_path, self.method, header_dict, is_bad_req)
     
@@ -86,37 +86,39 @@ class http_request(object):
         self.response_head += 'datetime: '
         self.response_head += self.get_http_date(datetime.datetime.utcnow()) + '\r\n'
 
-        if not is_bad_req:
-            self.response_head += 'last-modified: '
-            self.response_head += self.get_http_date(datetime.datetime.utcfromtimestamp(os.path.getmtime(file_path))) + '\r\n'
-        
-        if 'connection' in header_dict and header_dict['connection'] == 'keep-alive':
-            self.response_head += 'keep-alive: timeout=10\r\n'
-            
-        if method_type in ['HEAD', 'GET']  and 'if-modified-since' in header_dict:
-            since_time = header_dict['if-modified-since']
-            since_time = datetime.datetime.strptime(since_time, '%a, %d %b %Y %H:%M:%S GMT').timestamp()
-            modified_time = datetime.datetime.utcfromtimestamp(os.path.getmtime(file_path)).timestamp()
-            if since_time >= modified_time:
-                self.status_line = get_status_line.NOT_MODIFIED
-                self.response_body = ''
-                return
-
-        if method_type == 'HEAD':
-            self.response_body = ''
-            return
-        
         # if cannot find the path, response with 404
-        # 对于GET来说, 路径可以分为三种情况: 路径不存在、路径不是一个文件、路径是一个文件。
+        # For GET/HEAD, there are three cases: the path does not exist, 
+        # the path is not a file, and the path is a file. 
+        
+        # Paths that do not exist and paths that are not a file can be discussed in one category, 
+        # and paths that are a file that exist can be discussed in another category. 
         if not os.path.isfile(file_path):
             f = open(resource_path.not_found_html, 'r')
             self.status_line = get_status_line.NOT_FOUND
             self.response_head += content_type.HTML
-            self.response_body = f.read()
+            self.response_body = f.read() 
             f.close()
         else:
+            if not is_bad_req:
+                # if not a bad request, always return the last-modified entry. 
+                self.response_head += 'last-modified: '
+                self.response_head += self.get_http_date(datetime.datetime.utcfromtimestamp(os.path.getmtime(file_path))) + '\r\n'
+            
+            # the following conditions are always true in HTTP/1.1
+            if 'connection' in header_dict and header_dict['connection'] == 'keep-alive':
+                self.response_head += 'keep-alive: timeout=10\r\n'
+                
+            if not is_bad_req  and 'if-modified-since' in header_dict:
+                since_time = header_dict['if-modified-since']
+                since_time = datetime.datetime.strptime(since_time, '%a, %d %b %Y %H:%M:%S GMT').timestamp()
+                # modified_time is actually the last modified time of the specific file with path file_path
+                modified_time = datetime.datetime.utcfromtimestamp(os.path.getmtime(file_path)).timestamp()
+                if since_time >= modified_time:
+                    self.status_line = get_status_line.NOT_MODIFIED
+                    self.response_body = ''
+                    return
+            
             extension = os.path.splitext(file_path)[1]
-            # 图片资源需要使用二进制读取
             if extension == '.png' or extension == '.jpg':
                 f = open(file_path, 'rb')
                 if extension == '.png':
@@ -124,23 +126,52 @@ class http_request(object):
                 else: # jpg
                     self.response_head += content_type.JPG
                 # when load image from a file, it is in correct encoding already. 
-                self.response_body = f.read()
+                # Image resources need to be read as binary format.
+                self.response_body = f.read() # return a byte type.
                 f.close()
             else: # request a html file
                 f = open(file_path, 'r')
                 self.response_head += content_type.HTML
                 self.response_body = f.read()
                 f.close()
+        
+        # if not os.path.isfile(file_path):
+        #     f = open(resource_path.not_found_html, 'r')
+        #     self.status_line = get_status_line.NOT_FOUND
+        #     self.response_head += content_type.HTML
+        #     self.response_body = f.read() 
+        #     f.close()
+        # else:
+        #     extension = os.path.splitext(file_path)[1]
+        #     # 图片资源需要使用二进制读取
+        #     if extension == '.png' or extension == '.jpg':
+        #         f = open(file_path, 'rb')
+        #         if extension == '.png':
+        #             self.response_head += content_type.PNG
+        #         else: # jpg
+        #             self.response_head += content_type.JPG
+        #         # when load image from a file, it is in correct encoding already. 
+        #         self.response_body = f.read()
+        #         f.close()
+        #     else: # request a html file
+        #         f = open(file_path, 'r')
+        #         self.response_head += content_type.HTML
+        #         self.response_body = f.read()
+        #         f.close()
+        
+                # if method_type == 'HEAD' and :
+                #     self.response_body = ''
+                #     return
     
-    def get_http_date(self, date_str : str):
+    def get_http_date(self, utc_date : datetime):
         """
         Return a string representation of a date according to RFC 1123 (HTTP/1.1).
         The supplied date must be in UTC.
         """
-        weekday = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][date_str.weekday()]
+        weekday = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][utc_date.weekday()]
         month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
-             "Oct", "Nov", "Dec"][date_str.month - 1]
-        return "%s, %02d %s %04d %02d:%02d:%02d GMT" % (weekday, date_str.day, month, date_str.year, date_str.hour, date_str.minute, date_str.second)
+             "Oct", "Nov", "Dec"][utc_date.month - 1]
+        return "%s, %02d %s %04d %02d:%02d:%02d GMT" % (weekday, utc_date.day, month, utc_date.year, utc_date.hour, utc_date.minute, utc_date.second)
 
     def get_response(self):
         if isinstance(self.response_body, str):
