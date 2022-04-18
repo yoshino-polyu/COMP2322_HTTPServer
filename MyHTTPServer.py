@@ -1,24 +1,28 @@
 import socket
 import threading
 from httphead import http_request
+import time
+
 
 def service_client(new_socket, addr):
     print("Accept new connection from %s:%s..." % addr)
-    keep_alive_timeout = 10
-    # The timeout applies independently to each call to socket read/write operation. 
-    # So next call it will be 10 seconds again.
-    new_socket.settimeout(keep_alive_timeout)
+    keep_alive_timeout = 10.0
+    # The timeout applies independently to each call to socket read/write operation.
+    deadline = time.time() + keep_alive_timeout
     while True:
         try:
+            if time.time() >= deadline:
+                raise Exception()
+            new_socket.settimeout(deadline - time.time())
             request = new_socket.recv(1024).decode()
             print("the request content: \n" + request)
             http_req = http_request()
             http_req.parse_request(request)
             new_socket.sendall(http_req.get_response())
 
-            if not http_req.is_keep_alive:
+            if not http_req.is_keep_alive: # one-time transfer of data. 
                 break
-        # Exception to handle socket.timeout exception.
+        # Exception to handle timeout exception.
         except Exception as e:
             print("Keep alive timeout. Disconnected.")
             new_socket.close()

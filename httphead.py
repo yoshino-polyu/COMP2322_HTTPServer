@@ -67,7 +67,7 @@ class http_request(object):
             self.is_keep_alive = True
 
         # if it is not GET and HEAD, then it is a bad request, which means
-        # it is not a supported syntax. 
+        # it is not a supported syntax, so set bad request
         is_bad_req = False
         if self.method == 'GET' or self.method == 'HEAD':
             file_relative_path = self.url
