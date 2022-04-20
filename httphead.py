@@ -7,8 +7,8 @@ import datetime
 class get_status_line(object):
     OK = 'HTTP/1.1 200 OK\r\n'
     NOT_MODIFIED = 'HTTP/1.1 304 Not Modified\r\n'
-    NOT_FOUND = 'HTTP/1.1 404 Not Found\r\n'
     BAD_REQUEST = 'HTTP/1.1 400 Bad Request\r\n'
+    NOT_FOUND = 'HTTP/1.1 404 Not Found\r\n'
     
 # The content type
 class content_type(object):
@@ -39,10 +39,8 @@ class http_request(object):
         """
         # removing both the leading and trailing space of request
         request = request.strip()
-        print("!!!!debug request: ", request)
         # find the index of the first occurrence of '\r\n'
         first_break = request.find('\r\n')
-        print("debug list", request[:first_break].split(' '))
         http_method, url, protocol = request[:first_break].split(' ')
         header_list = request.split('\r\n')
         header_dict = {}
@@ -51,7 +49,6 @@ class http_request(object):
             if header.find(': ') != -1:
                 k, v = header.split(': ')
                 header_dict[k.lower()] = v
-        print("debug header_dict: ", header_dict)
         return http_method.upper(), url, protocol, header_dict
         
     def parse_request(self, request : str):
@@ -62,12 +59,10 @@ class http_request(object):
         """
         if request == '':
             return
-        self.method, self.url, self.protocol, header_dict = self.parse_request_head(request)
+        self.method, self.url, self.protocol, header_dict = http_request.parse_request_head(request)
         # the following conditions are always true in HTTP/1.1
         if 'connection' in header_dict and header_dict['connection'] == 'keep-alive':
             self.is_keep_alive = True
-        print("debug, connection in header_dict? ", 'connection' in header_dict)
-        # print("debug, contains? ", header_dict['connection'] == 'keep-alive')
         
         # if it is not GET and HEAD, then it is a bad request, which means
         # it is not a supported syntax, so set bad request
@@ -82,6 +77,15 @@ class http_request(object):
             file_path = resource_path.bad_request_html
         self.handle_file_request(file_path, self.method, header_dict, is_bad_req)
     
+    @staticmethod
+    def get_requested_file_name(request: str):
+        """
+        This method is used to get the requested file name. 
+        """
+        tmp = []
+        tmp = http_request.parse_request_head(request)
+        return tmp[1].split("/")[1] # tmp[1] is the url part
+        
     def handle_file_request(self, file_path : str, method_type : str, header_dict, is_bad_req):
         """
         Forms the status line, the header lines and the body of response message. 
@@ -91,7 +95,7 @@ class http_request(object):
         self.response_head += self.get_http_date(datetime.datetime.utcnow()) + '\r\n'
 
         if self.is_keep_alive:
-            self.response_head += 'keep-alive: timeout=100\r\n'
+            self.response_head += 'keep-alive: timeout=15\r\n'
         
         can_find_file = True # default to True, since bad request always can find 400.html
         if not os.path.isfile(file_path):
@@ -146,24 +150,24 @@ class http_request(object):
             # need to erase the content_type entry in header lines and erase the message body. 
             if method_type == 'HEAD':
                 self.response_body = ''
-                a = self.response_head.split('\r\n')
+                a = self.response_head.split('\r\n')[:-1] # [:-1] remove the last dummy empty string.
                 self.response_head = ''
-                print("last item is: ", a[-1])
-                del a[-1]
+                del a[-1] # the element we delete here is the recently added content type entry. 
                 for item in a:
                     self.response_head += item + '\r\n'
                 self.response_body = ''
         else: # can not find file and it is not bad request, which means response with 404
-            f = open(resource_path.not_found_html, 'r')
             self.status_line = get_status_line.NOT_FOUND
-            if method_type == 'HEAD': # for HEAD, must not return a message body. 
+            if method_type == 'HEAD': # for HEAD, must not return a message body.
                 return
-            # for GET, return a 404.html                
+            # for GET, return a 404.html  
+            f = open(resource_path.not_found_html, 'r')              
             self.response_head += content_type.HTML
             self.response_body = f.read() 
             f.close()
-        
-    def get_http_date(self, utc_date : datetime):
+    
+    @staticmethod   
+    def get_http_date(utc_date : datetime):
         """
         Return a string representation of a date according to RFC 1123 (HTTP/1.1).
         The supplied date must be in UTC.
@@ -172,8 +176,17 @@ class http_request(object):
         month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
              "Oct", "Nov", "Dec"][utc_date.month - 1]
         return "%s, %02d %s %04d %02d:%02d:%02d GMT" % (weekday, utc_date.day, month, utc_date.year, utc_date.hour, utc_date.minute, utc_date.second)
-
+    
+    def get_response_type(self):
+        """
+        Returns the status code of the response. 
+        """
+        return self.status_line.strip('\r\n').split(" ")[1]
+        
     def get_response(self):
+        """
+        Returns the whole response message. 
+        """
         if isinstance(self.response_body, str):
             return (self.status_line + self.response_head + '\r\n' + self.response_body).encode('utf-8')
         else: # self.response_body is 'bytes' type, which means the content is image. 
