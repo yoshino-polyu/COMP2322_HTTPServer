@@ -49,9 +49,10 @@ def service_client(new_socket, addr, mutex):
     # server_log = http_server()
     # The timeout applies independently to each call to socket read/write operation.
     new_socket.settimeout(keep_alive_timeout)
-    
+
     while True:
         try:
+            c = 10
             # every time receive the data, reset the timeout. 
             request = new_socket.recv(1024).decode()
             access_time = ""
