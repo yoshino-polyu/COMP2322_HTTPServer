@@ -13,7 +13,7 @@ class http_server(object):
         self.load_file()
     
     def write_file(self):
-        FL = open("log.txt", "w")
+        FL = open("log.txt", "w") # The file is created if it does not exist, otherwise it is truncated. 
         for i in self.log_list:
             FL.write("[")
             for j in i: # a specific list
@@ -22,14 +22,21 @@ class http_server(object):
         FL.close()
     
     def load_file(self):
-        FL = open("log.txt", "r", encoding="UTF-8")
-        self.read_lines(FL)
-    
+        try:
+            FL = open("log.txt", "r", encoding="UTF-8")
+            self.read_lines(FL)
+        except FileNotFoundError:
+            print("File does not exist")
+        finally:
+            FL.close()
+            print("File Closed")
+
     def read_lines(self, FL : TextIOWrapper):
         for i in FL.readlines():
             try:
                 eval(i)
             except SyntaxError:
+                print("Illegal file format!")
                 FL.close()
                 return
             i = eval(i)
