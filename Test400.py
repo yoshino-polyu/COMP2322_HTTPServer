@@ -10,5 +10,5 @@ print("Status: {} and reason: {}".format(resp.status, resp.reason))
 headers = resp.getheaders()
 pp = pprint.PrettyPrinter(indent=4)
 pp.pprint("Headers: {}".format(headers))
-print("the body of response:\n", resp.read().decode())
+print("the body of response:\n", resp.read().decode()) # utf8: string 
 con.close()

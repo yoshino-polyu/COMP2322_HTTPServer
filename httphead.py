@@ -43,13 +43,13 @@ class http_request(object):
         first_break = request.find('\r\n')
         http_method, url, protocol = request[:first_break].split(' ')
         header_list = request.split('\r\n')
-        header_dict = {}
+        message_header_kv = {}
         for header in header_list:
             # find returns -1 if ': ' is not found. 
             if header.find(': ') != -1:
-                k, v = header.split(': ')
-                header_dict[k.lower()] = v
-        return http_method.upper(), url, protocol, header_dict
+                field_name, field_value = header.split(': ')
+                message_header_kv[field_name.lower()] = field_value
+        return http_method.upper(), url, protocol, message_header_kv
         
     def parse_request(self, request : str):
         """
@@ -59,9 +59,9 @@ class http_request(object):
         """
         if request == '':
             return
-        self.method, self.url, self.protocol, header_dict = http_request.parse_request_head(request)
+        self.method, self.url, self.protocol, message_header_kv = http_request.parse_request_head(request)
         # the following conditions are always true in HTTP/1.1
-        if 'connection' in header_dict and header_dict['connection'] == 'keep-alive':
+        if 'connection' in message_header_kv and message_header_kv['connection'] == 'keep-alive':
             self.is_keep_alive = True
         
         # if it is not GET and HEAD, then it is a bad request, which means
@@ -75,7 +75,7 @@ class http_request(object):
         else: # bad request
             is_bad_req = True # whether is a bad request. 
             file_path = resource_path.bad_request_html
-        self.handle_file_request(file_path, self.method, header_dict, is_bad_req)
+        self.handle_file_request(file_path, self.method, message_header_kv, is_bad_req)
     
     @staticmethod
     def get_requested_file_name(request: str):
