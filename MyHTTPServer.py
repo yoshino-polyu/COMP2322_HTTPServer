@@ -63,7 +63,7 @@ class http_server(object):
 #     return return_message
     
 class ClientService(threading.Thread):
-    def __init__(self, socket_in_connection, client_addr, mutex):
+    def __init__(self, socket_in_connection : socket, client_addr, mutex):
         """
         @param client_addr: the address bound to the socket on the other end of the connection.
         @param mutex: lock object
@@ -105,7 +105,7 @@ class ClientService(threading.Thread):
                 info_list.append(access_time)
                 info_list.append(requested_file_name)
                 info_list.append(response_type)
-                
+                # synchronize IO operations. 
                 self.mutex.acquire()
                 server_log = http_server()
                 server_log.log_list.append(info_list)
@@ -150,7 +150,6 @@ def main():
         """
         # Use a thread per client to avoid the blocking client.recv() then use the main thread just for listening for new clients. 
         p = ClientService(client_connection, client_address, lock)
-        # p = threading.Thread(target=service_client, args=(client_connection,client_address, lock))
         p.start() # start the thread.
     server_socket.close() # dont close to achieve several rounds of communication in one TCP connection. 
 
