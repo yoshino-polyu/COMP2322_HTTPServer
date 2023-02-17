@@ -3,6 +3,11 @@ import socket
 import threading
 from httphead import http_request
 import datetime
+from selectors import DefaultSelector, EVENT_READ, EVENT_WRITE, SelectorKey
+
+selector = DefaultSelector()
+lock = threading.Lock() # lock the IO of log.txt
+KEEP_ALIVE_TIMEOUT = 15.0 # just listens to the new client and ends when it doesn't talk for 15 seconds. 
 
 class http_server(object):
     """
@@ -44,59 +49,49 @@ class http_server(object):
                 if isinstance(j[1], str):
                     i[j[0]] = j[1]
             self.log_list.append(i)    
-
-# def read_request(socket_in_connection):
-#     """
-#     use while true read the request message in case it is larger than 1kb. 
-#     """
-#     read_message = b"" #  'b' character before a string is used to specify the string as a “byte string“
-#     while True:
-#         tmp_message = socket_in_connection.recv(1024)# 1024 assumes the size of message read at most 1kb, but we can concatenate them to form a larger one. 
-#         if tmp_message:
-#             print("kkkk")
-#             read_message += tmp_message
-#         else:
-#             print("bbbbbb")
-#             break
-#     return_message = read_message.decode()
-#     # print("read message", read_message)
-#     return return_message
     
+
 class ClientService(threading.Thread):
-    def __init__(self, socket_in_connection : socket, client_addr, mutex):
+    def __init__(self, socket_in_connection : socket.socket, client_addr, mutex : threading.Lock):
         """
         @param client_addr: the address bound to the socket on the other end of the connection.
         @param mutex: lock object
         """
         super(ClientService, self).__init__()
         self.socket_in_connection = socket_in_connection
+        self.socket_in_connection.setblocking(False)
+        self.socket_in_connection.settimeout(KEEP_ALIVE_TIMEOUT) # every time receive the data, the timeout will be reset.
         self.client_addr = client_addr
         self.mutex = mutex
+        
+    # def read_buf(self, key : SelectorKey):
+    #     """
+    #     call back for read event
+    #     """
+    #     selector.unregister(key.fd)
+    
     def run(self):
         """
         @summary: Override the run method
         """
-        keep_alive_timeout = 15.0 # just listens to the new client and ends when it doesn't talk for 15 seconds. 
-        # server_log = http_server()
-        # The timeout applies independently to each call to socket read/write operation.
-        self.socket_in_connection.settimeout(keep_alive_timeout)
-        
         while True:
             try:
-                # every time receive the data, reset the timeout. 
-                    # request = ""
-                    # request = read_request(socket_in_connection)
-                request = self.socket_in_connection.recv(1024).decode() # 1024 assumes the size of message < 1kb. 
+                # self.socket_in_connection.setblocking(False)
+                # selector.register(self.socket_in_connection.fileno(), EVENT_READ, self.read_buf)
+
+                self.request = self.socket_in_connection.recv(1024).decode() # 1024 assumes the size of message < 1kb. 
+                
                 access_time = ""
-                tmp = http_request.get_http_date(datetime.datetime.utcnow()).split(',')
-                for i in tmp:
+                rfc1123_date = http_request.get_http_date(datetime.datetime.utcnow()).split(',')
+                for i in rfc1123_date:
                     access_time += i
-                requested_file_name = http_request.get_requested_file_name(request)
+                
+                requested_file_name = http_request.get_requested_file_name(self.request)
                 if requested_file_name == '':
                     requested_file_name = "index.html"
                 
                 http_req = http_request()
-                http_req.parse_request(request)
+                http_req.parse_request(self.request)
                 self.socket_in_connection.sendall(http_req.get_response()) # send response to client 
                 response_type = http_req.get_response_type()
                 
@@ -105,6 +100,7 @@ class ClientService(threading.Thread):
                 info_list.append(access_time)
                 info_list.append(requested_file_name)
                 info_list.append(response_type)
+                
                 # synchronize IO operations. 
                 self.mutex.acquire()
                 server_log = http_server()
@@ -121,8 +117,18 @@ class ClientService(threading.Thread):
                 print("Keep alive timeout. Disconnected.")
                 self.socket_in_connection.close()
                 break
-
         self.socket_in_connection.close()
+
+def accept(listening_socket : socket.socket, mask):
+    """
+    Callback for new connections
+    """
+    client_connection, client_address = listening_socket.accept()
+    print("accept{}".format(client_address))
+    # client_connection.setblocking(False)
+    p = ClientService(client_connection, client_address, lock)
+    p.start()
+    selector.unregister(listening_socket)
 
 def main():
     # Define socket host and port
@@ -131,27 +137,54 @@ def main():
 
     # socket.AF_INET -> an address family that is used to designate the type of addresses that your socket can communicate with (in this case, Internet Protocol v4 addresses)
     # Create socket
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
+    listening_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listening_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    listening_socket.setblocking(False) # non-blocking socket
     # bind port
-    server_socket.bind((SERVER_HOST, SERVER_PORT)) 
+    listening_socket.bind((SERVER_HOST, SERVER_PORT)) 
     # set up a listener
-    server_socket.listen(128) # server socket is used to listening on port
+    listening_socket.listen(128) # server socket is used to listening on port
     print('Listening on port %s' % SERVER_PORT)
-    lock = threading.Lock() # lock the IO of log.txt
+
+    selector.register(listening_socket.fileno(), EVENT_READ, accept)
+
     while True:
-        # Wait for client connections
-        client_connection, client_address = server_socket.accept()
+        print("Waiting for I/O")
         """
-        https://docs.python.org/3/library/socket.html#socket-objects
-        The return value is a pair (conn, address) where conn is a new socket object 
-        usable to send and receive data on the connection, 
-        and address is the address bound to the socket on the other end of the connection.
+        In the multiplexing model, for each socket, it is generally set to be non-blocking, but, as shown below, 
+        the entire user's process is actually blocked all the time. 
+        Only the process is blocked by the select function, not by the socket IO.
         """
-        # Use a thread per client to avoid the blocking client.recv() then use the main thread just for listening for new clients. 
-        p = ClientService(client_connection, client_address, lock)
-        p.start() # start the thread.
-    server_socket.close() # dont close to achieve several rounds of communication in one TCP connection. 
+        ready = selector.select() # blocking select()
+        for key, mask in ready:
+            callback = key.data
+            callback(key.fileobj, mask)
+            """
+            Socket descriptors are file system handles, and should be unique to your process for the duration of it's session
+            https://stackoverflow.com/questions/28031326/are-socket-descriptor-unique#:~:text=Socket%20descriptors%20are%20file%20system,the%20duration%20of%20it's%20session.
+            """
+            if key.fd == listening_socket.fileno():
+                selector.register(listening_socket.fileno(), EVENT_READ, accept)
+
+    # while True:
+    #     # Wait for client connections
+    #     client_connection, client_address = server_socket.accept()
+    #     """
+    #     https://docs.python.org/3/library/socket.html#socket-objects
+    #     The return value is a pair (conn, address) where conn is a new socket object 
+    #     usable to send and receive data on the connection, 
+    #     and address is the address bound to the socket on the other end of the connection.
+    #     """
+    #     # Use a thread per client to avoid the blocking client.recv() then use the main thread just for listening for new clients. 
+    #     p = ClientService(client_connection, client_address, lock)
+    #     # print("p is {}".format(p))
+    #     p.start() # start the thread.
+    # server_socket.close() # dont close to achieve several rounds of communication in one TCP connection. 
 
 if __name__ == '__main__':
     main()
+
+#
+# https://www.cnblogs.com/russellyoung/p/python-zhiio-duo-lu-fu-yong.html 
+#
