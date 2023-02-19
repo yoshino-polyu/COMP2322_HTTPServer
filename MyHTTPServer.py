@@ -1,9 +1,15 @@
 from io import TextIOWrapper
 import socket
 import threading
+import asyncio
+from asyncio import StreamReader, StreamWriter
+from concurrent.futures import ThreadPoolExecutor
 from httphead import http_request
 import datetime
 from selectors import DefaultSelector, EVENT_READ, EVENT_WRITE, SelectorKey
+from functools import partial
+
+CHUNK_LIMIT = 1024
 
 selector = DefaultSelector()
 lock = threading.Lock() # lock the IO of log.txt
@@ -49,141 +55,264 @@ class http_server(object):
                 if isinstance(j[1], str):
                     i[j[0]] = j[1]
             self.log_list.append(i)    
-    
 
-class ClientService(threading.Thread):
-    def __init__(self, socket_in_connection : socket.socket, client_addr, mutex : threading.Lock):
-        """
-        @param client_addr: the address bound to the socket on the other end of the connection.
-        @param mutex: lock object
-        """
-        super(ClientService, self).__init__()
-        self.socket_in_connection = socket_in_connection
-        self.socket_in_connection.setblocking(False)
-        self.socket_in_connection.settimeout(KEEP_ALIVE_TIMEOUT) # every time receive the data, the timeout will be reset.
-        self.client_addr = client_addr
-        self.mutex = mutex
+
+# class ClientService(threading.Thread):
+#     def __init__(self, socket_in_connection : socket.socket, client_addr, mutex : threading.Lock):
+#         """
+#         @param client_addr: the address bound to the socket on the other end of the connection.
+#         @param mutex: lock object
+#         """
+#         super(ClientService, self).__init__()
+#         self.socket_in_connection = socket_in_connection
+#         self.socket_in_connection.setblocking(False)
+#         self.socket_in_connection.settimeout(KEEP_ALIVE_TIMEOUT) # every time receive the data, the timeout will be reset.
+#         self.client_addr = client_addr
+#         self.mutex = mutex
         
-    # def read_buf(self, key : SelectorKey):
-    #     """
-    #     call back for read event
-    #     """
-    #     selector.unregister(key.fd)
+#     # def read_buf(self, key : SelectorKey):
+#     #     """
+#     #     call back for read event
+#     #     """
+#     #     selector.unregister(key.fd)
+#     @coroutine
+#     def run(self):
+#         """
+#         @summary: Override the run method
+#         """
+#         while True:
+#             try:
+#                 # self.socket_in_connection.setblocking(False)
+#                 # selector.register(self.socket_in_connection.fileno(), EVENT_READ, self.read_buf)
+
+#                 self.request = self.socket_in_connection.recv(1024).decode() # 1024 assumes the size of message < 1kb. 
+                
+#                 access_time = ""
+#                 rfc1123_date = http_request.get_http_date(datetime.datetime.utcnow()).split(',')
+#                 for i in rfc1123_date:
+#                     access_time += i
+                
+#                 requested_file_name = http_request.get_requested_file_name(self.request)
+#                 if requested_file_name == '':
+#                     requested_file_name = "index.html"
+                
+#                 http_req = http_request()
+#                 http_req.parse_request(self.request)
+#                 self.socket_in_connection.sendall(http_req.get_response()) # send response to client 
+#                 response_type = http_req.get_response_type()
+                
+#                 info_list = []
+#                 info_list.append(self.client_addr[0]) # addr[0] is the ip address
+#                 info_list.append(access_time)
+#                 info_list.append(requested_file_name)
+#                 info_list.append(response_type)
+                
+#                 # synchronize IO operations. 
+#                 self.mutex.acquire()
+#                 server_log = http_server()
+#                 server_log.log_list.append(info_list)
+#                 server_log.write_file()
+#                 del server_log # remove the object from memory
+#                 self.mutex.release()
+                
+#                 if not http_req.is_keep_alive: # one-time transfer of data. 
+#                     break
+
+#             # Exception to handle timeout exception.
+#             except Exception as e: 
+#                 print("Keep alive timeout. Disconnected.")
+#                 self.socket_in_connection.close()
+#                 break
+#         self.socket_in_connection.close()
+
+
+# stuff_lock = asyncio.Lock() # asyncio.Lcok allows you to protect a critical section, without blocking other coroutines from running which don't need access to that critical section.
+# q = asyncio.Queue(16) # 需要注意协程的消息队列需要使用asyncio.Queue，普通queue无法使用await
     
-    def run(self):
-        """
-        @summary: Override the run method
-        """
-        while True:
-            try:
-                # self.socket_in_connection.setblocking(False)
-                # selector.register(self.socket_in_connection.fileno(), EVENT_READ, self.read_buf)
+# def process_msg(request : str, client_IP : str):
+#     access_time = ""
+#     rfc1123_date = http_request.get_http_date(datetime.datetime.utcnow()).split(',')
+#     for i in rfc1123_date:
+#         access_time += i
+#     requested_file_name = http_request.get_requested_file_name(request)
+#     if requested_file_name == '':
+#         requested_file_name = 'index.html'
+#     http_req = http_request()
+#     http_req.parse_request(request)
+#     response_type = http_req.get_response_type()
+    
+#     info_list = []
+#     info_list.append(client_IP)
+#     info_list.append(access_time)
+#     info_list.append(requested_file_name)
+#     info_list.append(response_type)
+    
+#     # async with stuff_lock: # TODO: check whether it is necessary. if add, the return type will be coroutine. 
+#     server_log = http_server()
+#     server_log.log_list.append(info_list)
+#     server_log.write_file()
+#     del server_log
+#     return http_req.get_response()
 
-                self.request = self.socket_in_connection.recv(1024).decode() # 1024 assumes the size of message < 1kb. 
-                
-                access_time = ""
-                rfc1123_date = http_request.get_http_date(datetime.datetime.utcnow()).split(',')
-                for i in rfc1123_date:
-                    access_time += i
-                
-                requested_file_name = http_request.get_requested_file_name(self.request)
-                if requested_file_name == '':
-                    requested_file_name = "index.html"
-                
-                http_req = http_request()
-                http_req.parse_request(self.request)
-                self.socket_in_connection.sendall(http_req.get_response()) # send response to client 
-                response_type = http_req.get_response_type()
-                
-                info_list = []
-                info_list.append(self.client_addr[0]) # addr[0] is the ip address
-                info_list.append(access_time)
-                info_list.append(requested_file_name)
-                info_list.append(response_type)
-                
-                # synchronize IO operations. 
-                self.mutex.acquire()
-                server_log = http_server()
-                server_log.log_list.append(info_list)
-                server_log.write_file()
-                del server_log # remove the object from memory
-                self.mutex.release()
-                
-                if not http_req.is_keep_alive: # one-time transfer of data. 
-                    break
+# async def read_msg(reader):
+#     request = (await reader.read(1024)).decode()
+#     return request
 
-            # Exception to handle timeout exception.
-            except Exception as e: 
-                print("Keep alive timeout. Disconnected.")
-                self.socket_in_connection.close()
-                break
-        self.socket_in_connection.close()
+# async def write_msg(writer : StreamWriter, response : str):
+#     writer.write(response)
+#     await writer.drain()
+#     return
 
-def accept(listening_socket : socket.socket, mask):
-    """
-    Callback for new connections
-    """
-    client_connection, client_address = listening_socket.accept()
-    print("accept{}".format(client_address))
-    # client_connection.setblocking(False)
-    p = ClientService(client_connection, client_address, lock)
-    p.start()
-    selector.unregister(listening_socket)
+# good blog: https://stackoverflow.com/questions/48506460/python-simple-socket-client-server-using-asyncio
+# async def recv_process(reader : StreamReader, writer : StreamWriter):
+#     while True:
+#         try:
+#             rmsg = await read_msg(reader) # 如果socket上没有数据过来，则内部调用yield让出CPU并block在此处
+#             print("rmsg = ", rmsg)
+#             wmsg = process_msg(rmsg, writer.get_extra_info('peername')[0]) # 用来处理客户端发送过来的数据
+#             print("wmsg = ", wmsg)
+#             print("type = ", type(wmsg))
+#             if q.full():
+#                 print('queue is full, pop oldest msg and append new msg')
+#                 q.get_nowait() # 如果消息队列已经存满，则删除最早的信息
+#                 q.put_nowait(wmsg)
+#                 print('queue now size', q.qsize())
+#             else:
+#                 q.put_nowait(wmsg)
+#                 print('queue now size', q.qsize())
+#         except BaseException as e:
+#             print("recv_process exception", e)
+#             return # 如果发生异常（一般常见于客户端发送socket close）则退出循环
 
-def main():
-    # Define socket host and port
-    SERVER_HOST = '127.0.0.1'
-    SERVER_PORT = 8000
+# async def send_process(reader : StreamReader, writer : StreamWriter):
+#     print("bbbbbbbbb")
+#     while True:
+#         try:
+#             print("kkkkkkkkkk")
+#             wmsg = await q.get()
+#             print("========================================")
+#             print("wmsg = ", wmsg)
+#             print("type = ", type(wmsg))
+#             print("queue left size: ", q.qsize())
+#             await write_msg(writer, wmsg)
+#         except BaseException as e:
+#             print("send_process exception:", e) # 如果发生异常（一般常见于客户端接收socket close）则退出循环
+#             return
 
-    # socket.AF_INET -> an address family that is used to designate the type of addresses that your socket can communicate with (in this case, Internet Protocol v4 addresses)
-    # Create socket
-    listening_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listening_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+async def build_response(request : str, client_IP : str):
+    access_time = ""
+    rfc1123_date = http_request.get_http_date(datetime.datetime.utcnow()).split(',')
+    for i in rfc1123_date:
+        access_time += i
+    requested_file_name = http_request.get_requested_file_name(request)
+    if requested_file_name == '':
+        requested_file_name = 'index.html'
+    http_req = http_request()
+    http_req.parse_request(request)
+    response_type = http_req.get_response_type()
+    
+    info_list = []
+    info_list.append(client_IP)
+    info_list.append(access_time)
+    info_list.append(requested_file_name)
+    info_list.append(response_type)
+    
+    # async with stuff_lock: # TODO: check whether it is necessary. if add, the return type will be coroutine. 
+    server_log = http_server()
+    server_log.log_list.append(info_list)
+    server_log.write_file()
+    del server_log
+    await asyncio.sleep(0) # trick
+    return http_req.get_response()
 
-    listening_socket.setblocking(False) # non-blocking socket
-    # bind port
-    listening_socket.bind((SERVER_HOST, SERVER_PORT)) 
-    # set up a listener
-    listening_socket.listen(128) # server socket is used to listening on port
-    print('Listening on port %s' % SERVER_PORT)
-
-    selector.register(listening_socket.fileno(), EVENT_READ, accept)
-
-    while True:
-        print("Waiting for I/O")
-        """
-        In the multiplexing model, for each socket, it is generally set to be non-blocking, but, as shown below, 
-        the entire user's process is actually blocked all the time. 
-        Only the process is blocked by the select function, not by the socket IO.
-        """
-        ready = selector.select() # blocking select()
-        for key, mask in ready:
-            callback = key.data
-            callback(key.fileobj, mask)
-            """
-            Socket descriptors are file system handles, and should be unique to your process for the duration of it's session
-            https://stackoverflow.com/questions/28031326/are-socket-descriptor-unique#:~:text=Socket%20descriptors%20are%20file%20system,the%20duration%20of%20it's%20session.
-            """
-            if key.fd == listening_socket.fileno():
-                selector.register(listening_socket.fileno(), EVENT_READ, accept)
-
+async def read_request(socket_in_connection : socket.socket):
+    print("fuckfuck")
+    request = (await loop.sock_recv(socket_in_connection, CHUNK_LIMIT)).decode('utf8')
     # while True:
-    #     # Wait for client connections
-    #     client_connection, client_address = server_socket.accept()
-    #     """
-    #     https://docs.python.org/3/library/socket.html#socket-objects
-    #     The return value is a pair (conn, address) where conn is a new socket object 
-    #     usable to send and receive data on the connection, 
-    #     and address is the address bound to the socket on the other end of the connection.
-    #     """
-    #     # Use a thread per client to avoid the blocking client.recv() then use the main thread just for listening for new clients. 
-    #     p = ClientService(client_connection, client_address, lock)
-    #     # print("p is {}".format(p))
-    #     p.start() # start the thread.
-    # server_socket.close() # dont close to achieve several rounds of communication in one TCP connection. 
+    #     chunk = (await loop.sock_recv(socket_in_connection, CHUNK_LIMIT)).decode('utf8')
+    #     request += chunk
+    #     if len(chunk) < CHUNK_LIMIT:
+    #         break
+    print(f"request = {request}")
+    return request
 
-if __name__ == '__main__':
-    main()
+async def handle_client(socket_in_connection: socket.socket, client_addr):
+    request = await read_request(socket_in_connection)
+    print("request = ", request)
+    response = await build_response(request, client_addr)
+    print("response = ", response)
+    await loop.sock_sendall(socket_in_connection, response)
+    socket_in_connection.close()
+
+async def run_server(listening_socket):
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor()
+    while True:
+        print(f"listening on port: {SERVER_PORT}")
+        socket_in_connection, client_addr = await loop.sock_accept(listening_socket)
+        print("kkkkkkk")
+        print(f"socket_in_connection = {socket_in_connection}, client_addr = {client_addr}")
+        loop.run_in_executor(executor, partial(handle_client, socket_in_connection, client_addr))
+        # loop.create_task(handle_client(socket_in_connection, client_addr))
+
+# 1：服务器接收客户端发送过来的数据
+# 2：服务器进行AI运算，把运算结果保存到消息队列
+# 3：服务器从消息队列中读取AI运算之后结果
+# 4：服务器发送处理过的数据给客户端
+
+SERVER_HOST = '127.0.0.1'
+SERVER_PORT = 8000
+
+SERVER_PORT_SEND = 7777
+
+
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 
+server_socket.bind((SERVER_HOST, SERVER_PORT))
+server_socket.listen(128)
+
+loop = asyncio.get_event_loop() # 用来挂协程
+loop.run_until_complete(run_server(server_socket))
+# (run_server(server_socket))
+
+# loop.run_forever()
+# loop.run_until_complete(run_server(server_socket))
+# try:
+
+# except KeyboardInterrupt:
+#     server_socket.close()
+
+# # 创建协程服务，callback分别是前面的recv_process和send_process，然后指定服务的host，port和挂协程的loop
+# routine_recv = asyncio.start_server(recv_process, SERVER_HOST, SERVER_PORT, loop=loop)
+# routine_send = asyncio.start_server(send_process, SERVER_HOST, SERVER_PORT_SEND, loop=loop)
+
+# # coroutine = [routine_recv, routine_send]
+# # run_until_complete方法内部会把传进这个方法的协程coro给封装为Task对象（run_forever也会），然后再放到任务列表中。
+# server_recv, server_send = loop.run_until_complete(asyncio.gather(routine_recv, routine_send))
+
+# print('Recv server running on:', format(server_recv.sockets[0].getsockname()))
+# print('Send server running on:', format(server_send.sockets[0].getsockname()))
+
+# try:
+#     print("at forever")
+#     loop.run_forever()
+# # 这个地方很重要，如果客户端的read/write socket异常关闭了，
+
+# # 正常情况下loop上绑定的协程就退出了while True循环，接着也就退出了整个main函数
+
+# # 但是作为一个服务器，我们并不希望main函数就这么退出了，所以就有了run_forever
+
+# # 这个函数的意思是当loop上的协程退出之后继续运行，然后重新创建socket等待下一次连接
+# except KeyboardInterrupt:
+#     pass
+# server_recv.close()
+# loop.run_until_complete(server_recv.wait_closed())
+# server_send.close()
+# loop.run_until_complete(server_send.wait_closed())# 关闭协程
+# loop.close()
+
+
+
 
 #
 # https://www.cnblogs.com/russellyoung/p/python-zhiio-duo-lu-fu-yong.html 
