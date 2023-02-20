@@ -238,9 +238,9 @@ async def read_request(socket_in_connection : socket.socket):
 
 async def handle_client(socket_in_connection: socket.socket, client_addr):
     request = await read_request(socket_in_connection)
-    print("request = ", request)
+    # print("request = ", request)
     response = await build_response(request, client_addr)
-    print("response = ", response)
+    # print("response = ", response)
     await loop.sock_sendall(socket_in_connection, response)
     socket_in_connection.close()
 
@@ -250,8 +250,8 @@ async def run_server(listening_socket):
     while True:
         print(f"listening on port: {SERVER_PORT}")
         socket_in_connection, client_addr = await loop.sock_accept(listening_socket)
-        print("kkkkkkk")
-        print(f"socket_in_connection = {socket_in_connection}, client_addr = {client_addr}")
+        # print("kkkkkkk")
+        # print(f"socket_in_connection = {socket_in_connection}, client_addr = {client_addr}")
         loop.run_in_executor(executor, partial(handle_client, socket_in_connection, client_addr))
         # loop.create_task(handle_client(socket_in_connection, client_addr))
 

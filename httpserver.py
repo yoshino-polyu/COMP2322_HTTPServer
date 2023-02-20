@@ -89,6 +89,8 @@ class HttpProtocol(asyncio.Protocol):
         self.keepalive = True
 
         if self._timeout:
+            print("type of timeout = ", type(self._timeout))
+            print("val of timeout = ", self._timeout)
             self.logger.debug('Registering timeout event')
             self._timout_handle = self._loop.call_later(
                 self._timeout, self._handle_timeout)
@@ -126,7 +128,7 @@ class HttpProtocol(asyncio.Protocol):
         if self._timeout and self._timeout_handle:
             self.logger.debug('Delaying timeout event')
             self._timeout_handle.cancel()
-            self._timout_handle = self._loop.call_later(
+            self._timout_handle = self._loop.call_later( # 
                 self._timeout, self._handle_timeout)
 
     def _parse_headers(self, data):

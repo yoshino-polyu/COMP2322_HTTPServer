@@ -10,6 +10,7 @@ def _start_server(bindaddr, port, hostname, folder):
     coroutine = loop.create_server(lambda: HttpProtocol(hostname, folder),
                                    bindaddr,
                                    port)
+    print("type of coroutine = ", coroutine)
     server = loop.run_until_complete(coroutine)
     print('Starting server on {}'.format(server.sockets[0].getsockname()))
     try:
